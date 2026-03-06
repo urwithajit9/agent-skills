@@ -1,0 +1,6 @@
+# Agent-specific config folders (local to each developer's agent)
+.agents/
+.claude/
+
+# Keep the lock file — it lets others reproduce exact skill versions
+# skills-lock.json  ← do NOT ignore this
