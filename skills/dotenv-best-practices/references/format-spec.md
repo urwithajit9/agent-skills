@@ -1,179 +1,147 @@
-# .env Format Specification
+# .env format notes
 
 Reference: [dotenv.space](https://dotenv.space)
 
-## Grammar Rules
+There is no single `.env` standard. The common core is small and portable; everything else
+depends on the loader (python-dotenv, dotenvy, Node's `dotenv`, Docker Compose, a framework's
+own loader, evnx, ...). When behaviour matters, check the docs of the loader you actually use,
+or test it with a one-line example. This page separates the portable subset from the parts
+where tools differ.
 
-The `.env` format is intentionally simple. A file is a sequence of lines; each line is one of:
+## Portable subset
 
-1. **A blank line** — ignored
-2. **A comment** — starts with `#`, ignored entirely
-3. **An assignment** — `KEY=VALUE` or `KEY="VALUE"` or `KEY='VALUE'`
-
-```
-# Formal grammar (simplified)
-line       = blank | comment | assignment
-blank      = *whitespace newline
-comment    = "#" *any newline
-assignment = KEY "=" value newline
-KEY        = [A-Za-z_][A-Za-z0-9_]*
-value      = bare-value | double-quoted | single-quoted
-```
-
-## Key Naming Rules
-
-- Characters: `A-Z`, `a-z`, `0-9`, `_` (underscore)
-- Must start with a letter or underscore — never a digit
-- Convention: `UPPER_SNAKE_CASE` for all variables
-- No spaces around `=`
+A file is lines; each line is blank, a `#` comment, or an assignment.
 
 ```env
-# ✅ Valid keys
-DATABASE_URL=...
-_INTERNAL_FLAG=...
-REDIS_URL_1=...
-
-# ❌ Invalid keys
-1_THING=...          # starts with digit
-DATABASE URL=...     # space in key
-my-key=...           # hyphen not allowed
+# comment
+KEY=value
+QUOTED="value with spaces"
+LITERAL='no $expansion or \escapes here'
 ```
 
-## Value Quoting Rules
+- One assignment per line, no spaces around `=`.
+- Quote values that contain spaces, `#`, or leading/trailing whitespace.
+- Use UTF-8 and LF line endings. CRLF can leave a stray `\r` at the end of values in some
+  parsers.
+- Everything is a string; the file has no types, arrays or objects.
 
-### Bare values (no quotes)
-Everything after `=` until end of line. Leading/trailing whitespace is **included** in some parsers and **stripped** in others — do not rely on either behavior. Always quote if whitespace matters.
+## Key (variable name) characters
+
+- **Portable**: letters, digits and `_`, not starting with a digit (`[A-Za-z_][A-Za-z0-9_]*`),
+  by convention `UPPER_SNAKE_CASE`. These names work in every shell, container runtime and
+  CI system.
+- **Tool-dependent**: `.`, `-`, `[`, `]`, a leading digit or non-ASCII letters. Docker Compose
+  reads names such as `spring.datasource.url` or `my-key`, and evnx reads them since v0.13.0, but
+  a POSIX shell cannot `export` them, and many deployment targets reject them. If a variable
+  must travel through a shell, a CI system or a secret manager, keep to the portable set.
+- Spaces, quotes, `$`, `@`, `+`, `/` and braces in names are not valid anywhere useful.
 
 ```env
-DATABASE_URL=postgresql://user:pass@localhost/mydb
-DEBUG=True
-PORT=8000
+DATABASE_URL=...        # portable
+_INTERNAL_FLAG=...      # portable
+spring.datasource.url=  # works in Compose; not exportable from a shell
+1_THING=...             # leading digit: avoid
+DATABASE URL=...        # space: invalid
 ```
 
-### Double-quoted values
-Escape sequences are interpreted: `\n`, `\t`, `\\`, `\"`, `\$`.
-Variable interpolation (`$VAR`) may or may not be expanded depending on the parser.
+## Quoting
+
+| Form | Typical behaviour | Differs by tool |
+|---|---|---|
+| Bare `KEY=value` | Value runs to end of line, or to ` #` as an inline comment | Whether surrounding whitespace is trimmed; whether inline comments are recognised |
+| Double quotes | Escapes such as `\n` and `\"` are interpreted; expansion usually applies | Which escapes exist; whether `$VAR` expands |
+| Single quotes | Literal text: no escapes, no expansion | Rarely differs; the safest way to keep a `$` |
 
 ```env
 GREETING="Hello, World!"
-MULTILINE="line one\nline two"
 PATH_WITH_SPACE="C:\\Program Files\\MyApp"
-```
-
-### Single-quoted values
-Treated as literal strings. No escape sequences, no variable interpolation.
-
-```env
 REGEX_PATTERN='^\d{4}-\d{2}-\d{2}$'
-LITERAL_DOLLAR='$100.00'
+PRICE='$100.00'
+PASSWORD="p@ss#word"      # quote anything containing # or spaces
+BASE64_KEY=abc123==       # everything after the first = is the value
 ```
 
-## What the Standard .env Format Does NOT Support
+## Variable expansion (the part tools disagree on)
 
-These constructs are **not** part of the core spec. Some parsers support them as extensions; most don't.
+Expansion means a value that refers to another variable:
 
 ```env
-# ❌ Arrays / JSON — NOT standard
+BASE_URL=http://localhost:8000
+API_URL=${BASE_URL}/api
+```
+
+Questions the loader answers differently:
+
+1. **Does it expand at all?** Some loaders do by default (python-dotenv, Docker Compose), some
+   need an add-on or option (Node's `dotenv` core needs `dotenv-expand`), some depend on a
+   flag. Check the loader.
+2. **Which value does `${VAR}` see?** Docker Compose, and evnx since v0.13.0, expand **top to
+   bottom**: a reference reads the value assigned above it, and a reference to a variable
+   assigned further down is an error or stays unexpanded. Other loaders may read the last value
+   in the file, the process environment first, or something else. The same file can therefore
+   mean different things in two tools.
+3. **Defaults and syntax**: `${VAR:-default}`, `$VAR` without braces, escaping with `\$` or
+   single quotes.
+4. **Real environment vs file**: whether an already-set OS variable wins over the file (usually
+   yes; see `override` options).
+
+Portable practice: define a variable before any line that uses it, use braces, avoid relying
+on defaults or forward references, and single-quote values that should keep a literal `$`
+(passwords and tokens containing `$` are a classic source of silent corruption).
+
+## Constructs that are NOT portable
+
+```env
+# Arrays / JSON as values: just strings to the loader
 CORS_ALLOWED=["https://example.com"]
-CONFIG={"key": "value"}
 
-# ❌ True multiline values — NOT standard
-CERT="""
------BEGIN CERTIFICATE-----
+# Multi-line values: loader-specific
+CERT="-----BEGIN CERTIFICATE-----
 ...
------END CERTIFICATE-----
-"""
+-----END CERTIFICATE-----"
 
-# ❌ Variable interpolation — parser-dependent
-BASE_URL=http://localhost
-API_URL=${BASE_URL}/api    # works in some parsers only
-
-# ❌ Export prefix — shell syntax, not .env syntax
+# export prefix: shell syntax; some loaders accept it, some do not
 export SECRET_KEY=myvalue
 ```
 
-### Workarounds for Unsupported Constructs
+Workarounds: comma-separated strings for lists; base64 for JSON or certificates (decode in
+code); `\n` escapes inside double quotes where the loader interprets them; or a secrets manager
+for structured data. Test the loader if you rely on any of these.
+
+## Conventions
 
 ```env
-# Arrays → comma-separated strings
-CORS_ALLOWED=https://example.com,https://admin.example.com
-
-# JSON → base64-encode
-CONFIG_JSON=eyJrZXkiOiJ2YWx1ZSJ9
-
-# Multiline → single-line with \n escape (parser must support it)
-CERT="-----BEGIN CERTIFICATE-----\nMIIBxxx...\n-----END CERTIFICATE-----"
-
-# Or use a separate secrets manager for complex structured data
-```
-
-## Parser Compatibility Matrix
-
-| Feature | python-dotenv | dotenvy (Rust) | dotenv (Node) | evnx |
-|---|---|---|---|---|
-| Bare values | ✅ | ✅ | ✅ | ✅ |
-| Double-quoted | ✅ | ✅ | ✅ | ✅ |
-| Single-quoted | ✅ | ✅ | ✅ | ✅ |
-| `\n` in quotes | ✅ | ✅ | ✅ | ✅ |
-| `$VAR` interpolation | ✅ (optional) | ❌ | ✅ | ❌ |
-| Arrays `[...]` | ✅ (django-environ) | ❌ | ❌ | ❌ |
-| `export KEY=` prefix | ✅ | ✅ | ✅ | ❌ |
-| Inline comments `KEY=val # comment` | ✅ | ✅ | ✅ | ✅ |
-
-## Encoding and Special Characters
-
-- **Encoding**: UTF-8 is the universal expectation.
-- **Line endings**: LF (`\n`) preferred; CRLF (`\r\n`) accepted by most parsers but can cause hidden bugs (the `\r` gets appended to the value).
-- **Spaces in values**: Must be quoted — `NAME="John Doe"` not `NAME=John Doe`
-- **`#` in values**: Must be quoted — `PASSWORD="p@ss#word"` not `PASSWORD=p@ss#word`
-- **`=` in values**: Safe in quoted form; in bare values everything after the first `=` is the value including further `=` signs.
-
-```env
-# These are all equivalent:
-BASE64_KEY=abc123==
-BASE64_KEY="abc123=="
-```
-
-## File Structure Conventions
-
-```env
-# ─────────────────────────────────
-# Application
-# ─────────────────────────────────
+# --- Application ---
 APP_NAME=MyApp
 APP_ENV=development
 SECRET_KEY=CHANGE_ME
-DEBUG=False
-PORT=8000
+DEBUG=false
 
-# ─────────────────────────────────
-# Database
-# ─────────────────────────────────
+# --- Database ---
 DATABASE_URL=postgresql://user:pass@localhost:5432/mydb
-DATABASE_POOL_SIZE=10
-REDIS_URL=redis://localhost:6379/0
 
-# ─────────────────────────────────
-# External APIs
-# ─────────────────────────────────
+# --- External APIs (source: provider dashboard) ---
 STRIPE_SECRET_KEY=sk_test_YOUR_KEY_HERE
-OPENAI_API_KEY=sk-proj-YOUR_KEY_HERE
 ```
 
-Conventions:
-- Group related variables with section comments
-- Put non-secret config first, secrets last
-- Use consistent casing throughout (all `UPPER_SNAKE_CASE`)
-- Document the source of each secret in `.env.example` comments
+- Group related variables with comments; keep one casing style.
+- Say where each secret comes from in `.env.example`.
+- Keep `.env.example` complete: every name the app reads, placeholder values only.
 
-## File Permissions
+## File permissions
 
-On Unix systems, `.env` files should be owner-read-only:
+`.env` should be readable by its owner only:
 
 ```bash
-chmod 600 .env        # Owner can read/write, no one else
-# Or at minimum:
-chmod 640 .env        # Owner rw, group read, others none
+chmod 600 .env
 ```
 
-`evnx doctor` checks this automatically.
+`evnx doctor` checks file modes and whether git would commit an env file, and `evnx doctor --fix`
+repairs them; check `evnx doctor --help` for the installed version's behaviour.
+
+## Checking what a tool actually reads
+
+When a value is wrong, look at what the loader parsed instead of reading the file by eye. With
+evnx: `evnx parse` lists each line, key and flags (empty, placeholder, secret) and never prints
+values; `evnx validate` reports expansion-order problems. Without evnx, print the variable names
+the process sees (not the values), for example with `env | cut -d= -f1`.

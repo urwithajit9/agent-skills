@@ -1,205 +1,179 @@
 ---
-name: dotenv-best-practices
+name: evnx-cli
 description: >
-  Use when working with .env files, environment variables, or secrets management.
-  Triggers on tasks like: "set up .env", "manage environment variables", "create .env.example",
-  "check if .env is in gitignore", "handle secrets in CI/CD", "configure environment for
-  Django / FastAPI / Next.js / Vite / Rust / Docker", "what variables should go in .env",
-  "should I commit this env file", ".env not loading", "variable is undefined", "boolean
-  env var bug", "NEXT_PUBLIC prefix", "VITE_ prefix", "secrets in GitHub Actions",
-  "environment variable best practices", or any mention of .env, dotenv, or secret leaks.
-  Works with any stack and any tool — does not require evnx to be installed.
+  Use when working with the evnx CLI to manage .env files. Triggers on tasks like:
+  "validate my .env", "scan for secrets", "diff .env and .env.example", "convert .env to
+  JSON / YAML / Kubernetes / Docker / GitHub Actions / AWS / GCP / Terraform", "sync .env with
+  .env.example", "add or remove an environment variable", "migrate secrets to a secret manager",
+  "encrypt or restore a .env backup", "run a command with my .env", "scan staged changes",
+  "install a secret-scanning pre-commit hook", "set up evnx in CI/CD", "evnx doctor",
+  "evnx cloud / vault", or any mention of evnx. Also use when evnx is installed and the user
+  wants to validate, scan, convert, diff, sync, migrate, back up, or restore .env files.
 license: MIT
 metadata:
   author: urwithajit9
-  version: "1.0.0"
-  homepage: https://dotenv.space
+  version: "2.0.0"
+  homepage: https://docs.evnx.dev
   repository: https://github.com/urwithajit9/agent-skills
 ---
 
-# .env Best Practices
+# evnx CLI
 
-Reference: [dotenv.space](https://dotenv.space) — the complete `.env` guide for every stack.
+evnx manages `.env` files: create and edit them, validate them against a template, scan for
+secrets, diff and sync environments, convert to deployment formats, migrate into secret
+managers, back up, and sync through an encrypted cloud.
 
-## Core Rules (Never Break These)
+This skill holds the stable rules and the workflow. Flag lists and format lists change between
+releases, so they live in [references/](references/) and in the binary itself.
 
-1. **Never commit `.env`** — add it to `.gitignore` before the first commit, not after.
-2. **Always commit `.env.example`** — strip real values, keep all variable names and comments.
-3. **Rotate immediately if exposed** — deleting the file is not enough. Git history retains it. Use `git filter-repo` or BFG Repo Cleaner AND rotate every key.
-4. **Bots scan GitHub continuously.** Exposed keys are found within minutes of a push.
-5. **Every env var is a string.** Parse types explicitly in application code.
+## Before you act: check the version
 
-## The File Hierarchy
-
-| File | Commit? | Purpose |
-|---|---|---|
-| `.env` | ❌ Never | Local real values — your actual secrets |
-| `.env.example` | ✅ Always | Template with placeholder values — the team contract |
-| `.env.local` | ❌ Never | Machine-specific overrides (Next.js / Vite convention) |
-| `.env.development` | ✅ If no real secrets | Non-secret dev defaults shared by the team |
-| `.env.production` | ❌ Never | Managed by infra/CI — never lives in the repo |
-| `.env.test` | ✅ If mock keys only | CI test values using fake/mock credentials |
-
-## The .gitignore Template
-
-```gitignore
-# .env files — never commit
-.env
-.env.local
-.env.production
-.env.staging
-.env.*.local
-
-# DO commit this — do not add to .gitignore:
-# .env.example
-```
-
-## The .env.example Template Pattern
-
-```env
-# Application
-APP_NAME=MyApp
-SECRET_KEY=CHANGE_ME_generate_with_openssl_rand_hex_32
-DEBUG=False
-PORT=8000
-
-# Database
-DATABASE_URL=postgresql://user:password@localhost:5432/dbname
-REDIS_URL=redis://localhost:6379/0
-
-# Third-party APIs — get keys from the provider dashboard
-STRIPE_SECRET_KEY=sk_test_YOUR_KEY_HERE
-OPENAI_API_KEY=sk-proj-YOUR_KEY_HERE
-AWS_ACCESS_KEY_ID=YOUR_AWS_KEY_HERE
-AWS_SECRET_ACCESS_KEY=YOUR_AWS_SECRET_HERE
-
-# Feature flags
-ENABLE_FEATURE_X=False
-```
-
-## Framework-Specific Rules
-
-### Next.js
-- `NEXT_PUBLIC_` prefix → inlined into browser bundle at **build time** (public, visible in DevTools)
-- No prefix → server-only (never reaches the browser)
-- Must exist at `next build` time, not just runtime. Pass to CI build step explicitly.
-
-### Vite
-- `VITE_` prefix → exposed to browser (`import.meta.env.VITE_X`)
-- No prefix → build-scripts only, not bundled
-
-### Django
-- Use `django-environ` or `python-dotenv`; never put real credentials in `settings.py`
-- `"False"` is a truthy string — always parse booleans explicitly
-
-### Rust
-- Use `dotenvy` for loading, `config` + `secrecy::SecretString` for type-safe production config
-- Always `.trim()` before `.parse()` — trailing whitespace silently breaks type parsing
-
-### Docker / Docker Compose
-- Use `env_file:` in compose, not `environment:` with inline values
-- Never `ENV SECRET_KEY=...` in Dockerfile — it's visible in every layer and `docker inspect`
-- Docker Compose resolves `env_file` paths relative to the Compose file location, not the CWD
-
-## The Boolean Trap (Extremely Common Bug)
-
-```python
-# ❌ WRONG — the string "False" is truthy in Python
-if os.getenv("DEBUG"):
-    ...
-
-# ✅ CORRECT
-DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
-```
-
-```rust
-// ❌ WRONG
-let debug = std::env::var("DEBUG").unwrap_or("false".to_string());
-
-// ✅ CORRECT — trim and compare
-let debug = std::env::var("DEBUG")
-    .unwrap_or_default()
-    .trim()
-    .to_lowercase() == "true";
-```
-
-## Common Bugs Quick Reference
-
-For detailed debugging patterns covering 10 frequent `.env` bugs (undefined variables, NEXT_PUBLIC in production, Docker path errors, boolean trap, Sentry leaks, Vite prefix, GitHub Actions masking, ALLOWED_HOSTS, Rust parse panics, silent teammate breakage), see [references/debugging.md](references/debugging.md).
-
-## CI/CD — No .env Files Exist Here
-
-In CI/CD pipelines, variables are injected from the platform's secret store. `.env` files should never be present.
-
-```yaml
-# GitHub Actions — correct pattern
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
-```
-
-**Enable GitHub Push Protection now:** Settings → Code security → Push protection. Blocks 100+ secret patterns automatically. Free, takes 30 seconds. Do it before you forget.
-
-## Startup Validation — Fail Fast
-
-Always validate required variables at startup, not at runtime when the missing variable is first used.
-
-```python
-# Python — validate at import time
-def validate_env():
-    required = ["SECRET_KEY", "DATABASE_URL", "STRIPE_SECRET_KEY"]
-    missing = [k for k in required if not os.getenv(k)]
-    if missing:
-        raise RuntimeError(f"Missing required env vars: {missing}")
-
-validate_env()
-```
-
-```typescript
-// TypeScript / Node.js
-const required = ["DATABASE_URL", "SECRET_KEY"] as const;
-for (const key of required) {
-  if (!process.env[key]) throw new Error(`Missing required env var: ${key}`);
-}
-```
-
-## Secret Managers — When to Graduate from .env
-
-`.env` is for local development. For production, use a secrets manager.
-
-| Tool | Best For | Cost |
-|---|---|---|
-| AWS Secrets Manager | AWS workloads | ~$0.40/secret/mo |
-| HashiCorp Vault | Multi-cloud, enterprise | Free self-hosted |
-| Doppler | Multi-env teams, great DX | Free tier / $6+/mo |
-| Infisical | Open-source Doppler alt | Free self-hosted |
-| GCP Secret Manager | GCP workloads | $0.06/10k accesses |
-| Azure Key Vault | Azure workloads | $0.03/10k ops |
-
-## Using evnx for Automated Validation
-
-If `evnx` is available, use it for automated validation and secret scanning:
+Run this first, once per session, before any other evnx command:
 
 ```bash
-# Install evnx (choose your preferred method)
-cargo install evnx                    # Rust/Cargo
-npm install -g @evnx/cli              # Node.js/npm
-pip install evnx                      # Python/pip
-
-# Run validation and secret scanning
-evnx validate --strict
-evnx scan
-evnx diff                             # Compare .env with .env.example
+evnx --version
 ```
 
-See the `evnx-cli` skill for the complete command reference and CI/CD integration patterns.
+- **The installed binary is the source of truth, not this skill.** For any command you are about
+  to use, run `evnx <command> --help` and use the flags it lists. For the whole surface at once
+  (commands, flags, compiled-in features, docs URLs) run `evnx commands --json`.
+- **Compare the version with the "Version notes" table below.** If a behaviour you rely on is
+  marked "since vX.Y.Z" and the installed version is older, do not assume it. Tell the user
+  what is missing and either use the older behaviour or suggest an upgrade.
+- **To upgrade:** `evnx update` prints the right upgrade command for how evnx was installed
+  (it changes nothing). `evnx update --check` asks GitHub whether a newer release exists
+  (exit 0 current, 1 newer exists, 2 could not tell). If several copies are installed,
+  `evnx update --list` shows which one runs. Let the user run the upgrade; do not install
+  software on your own.
+- **If the binary is newer than the table's last row,** trust `--help` over this skill, and
+  read the [CHANGELOG](https://github.com/urwithajit9/evnx/blob/main/CHANGELOG.md) for what
+  moved. Per-command pages: `https://docs.evnx.dev/cli/commands/<command>` (the exact URL is
+  the `docs_url` field in `evnx commands --json`).
+- **If `evnx` is not installed,** say so and point to the install channels `evnx update`
+  lists (`cargo install evnx`, `npm install -g @evnx/cli`, `pip install evnx`, Homebrew, Scoop,
+  winget, or the install script). A build compiled without some features
+  lacks the matching commands (`cloud`, `migrate`, `backup`, network access for
+  `update --check`); `evnx commands` shows which features this build has.
 
-## Further Reference
+## Principles
 
-- [references/format-spec.md](references/format-spec.md) — `.env` format grammar and edge cases
-- [references/security-checklist.md](references/security-checklist.md) — full pre-deploy checklist
-- [references/debugging.md](references/debugging.md) — 10 common bugs with fixes
-- [dotenv.space](https://dotenv.space) — complete multi-stack reference
+1. **Never print secret values.** Do not `cat` a `.env` or paste its values into chat, commits
+   or logs. `evnx parse` lists names and flags without values; `evnx scan` shows only masked
+   previews. Use `--values`/`--show-values` only when the user explicitly asks, and never
+   echo what comes back. Use fake or masked keys in any example you write.
+2. **Look before you write.** Prefer `--dry-run` for anything that edits files (`init`, `add`,
+   `remove`, `validate --fix`, `sync`, `restore`, `template`), and `--json` when you will read
+   the result programmatically instead of scraping text.
+3. **Read the exit code; "could not run" is not "clean".** Exit 0 is clean. Exit 1 means
+   findings or differences. Exit 2 means evnx could not give a verdict (bad flag, missing file,
+   no terminal to ask). Treat 2 as a failure to investigate, never as a pass. Exit 4 means the
+   user declined a prompt. Cloud commands use 10-15 (see below). Per-command tables:
+   [references/commands.md](references/commands.md).
+4. **No terminal means no prompts.** In CI or an agent shell, prompts cannot be answered.
+   Pass `--yes` (or `--force` where the command says so) only after you have previewed the
+   change, and pass explicit flags instead of relying on interactive selection.
+5. **`.env` is never committed.** `.env` stays git-ignored; `.env.example` (names, placeholder
+   values) is committed. Check with `evnx doctor` (`evnx doctor --fix` repairs `.gitignore`
+   and file modes).
+6. **Catch secrets before they leave the machine.** Use `evnx scan --staged` before a commit,
+   and `evnx scan hook install` to make it automatic. In CI gate on `evnx scan --severity high`.
+7. **Do not suppress to get green.** `--exit-zero`, `--update-baseline` and `# evnx:allow`
+   markers hide findings. Use them only when the user chose to accept a finding, and say what
+   you accepted. If a secret was really exposed, rotate it at the provider; deleting the file
+   or the line is not enough.
+8. **Run programs with `evnx run`** instead of exporting a `.env` into the shell:
+   `evnx run -- <command>` hands the variables to the child process only, and masks secrets in
+   output when it is not a terminal.
+
+## Pick the command
+
+| Job | Command |
+|---|---|
+| Set up `.env`, `.env.example`, `.gitignore`, contract | `evnx init` |
+| Add / remove variables (service, framework, blueprint, custom) | `evnx add`, `evnx remove` |
+| Is `.env` complete and sane vs the template? | `evnx validate` |
+| Hunt for committed or about-to-be-committed secrets | `evnx scan` (`--staged`, `scan hook`, `scan rules`) |
+| Compare two env files or env vs template | `evnx diff` |
+| Keep `.env` and `.env.example` aligned | `evnx sync` (`--check` is the CI gate) |
+| Declare required/format/secret per variable | `evnx spec init`, `evnx spec check` |
+| Output as JSON, Kubernetes, Terraform, ... | `evnx convert` |
+| Move into a secret manager | `evnx migrate` (prints commands; `--print-only` to save them) |
+| Render a config file from a template | `evnx template` |
+| Encrypted local backup | `evnx backup`, `evnx restore` |
+| Encrypted team sync | `evnx auth`, `evnx vault`, `evnx cloud` |
+| Project health | `evnx doctor` |
+| See what evnx parses, names only | `evnx parse` |
+
+## Typical flows
+
+Check a project (read-only):
+
+```bash
+evnx doctor
+evnx validate --strict
+evnx scan --severity high
+evnx diff --fail-on missing
+```
+
+Add variables safely:
+
+```bash
+evnx add --list                          # ids that exist in this version
+evnx add service stripe --dry-run --json # preview the names that would be added
+evnx add service stripe --yes            # then write (also updates .env.example)
+```
+
+Before committing:
+
+```bash
+evnx scan --staged
+evnx scan hook install                   # automatic from now on
+```
+
+Convert or migrate: run `evnx convert --help` for the current target list, preview on stdout,
+and only write to a file (`-o`) the user wants; the output holds real values. See
+[references/convert-formats.md](references/convert-formats.md).
+
+CI: [references/cicd-integration.md](references/cicd-integration.md).
+
+## Reading scan results
+
+- `severity` (critical, high, medium, low) is how bad a finding is if real.
+  `confidence` (high, medium, low) is how sure evnx is that it is real. `--severity` and
+  `--confidence` filter each; both must pass.
+- A finding in a git-ignored, untracked file (a normal local `.env`) is summarised in one
+  line and does not fail the run; `--include-ignored` lists them.
+- To accept existing findings deliberately: `evnx scan --update-baseline` (fingerprints only,
+  safe to commit) or a same-line `# evnx:allow <rule-id> - reason` marker.
+
+## Version notes
+
+Rows append as releases ship. Check the installed version against the "since" column before
+relying on a behaviour. Anything not listed here: use `--help`.
+
+| Since | Behaviour an agent should know |
+|---|---|
+| v0.13.0 | `${VAR}` expands top to bottom, as Docker Compose does: it reads the value assigned above it, and a forward reference is an error naming the line to move. Older versions used each variable's last value. |
+| v0.13.0 | Keys may contain `.`, `-`, `[`, `]`, a leading digit or non-ASCII letters; outputs that cannot hold such a name (e.g. shell, GitHub Actions) refuse it by name. |
+| v0.13.0 | `scan --format json` is `schema_version: 2`: `severity` (how bad) is separate from `confidence` (how sure). `--severity` filters risk; before, it filtered confidence, which is now `--confidence`. SARIF `ruleId` is a stable rule id. |
+| v0.13.0 | `scan` gains rule files and packs (`scan rules`), baseline (`--baseline`, `--update-baseline`), `# evnx:allow` markers, `--staged`, and `scan hook install\|uninstall\|status`. 63 built-in rules (13 in 0.12). A `--severity high` gate may fail on more than before. |
+| v0.13.0 | `evnx remove` (alias `rm`) deletes variables from the env file, and from the template and contract with `--template`, `--contract` or `--all`. |
+| v0.13.0 | Declining a confirmation in `add` and `remove` exits 4 (`add` exited 0 before). Some `--help` text may still say otherwise; the exit code is what to trust. |
+| v0.13.0 | `auth`, `vault`, `org` and `cloud` exit 10-15 for server failures: 10 not signed in, 11 forbidden, 12 plan limit, 13 unreachable, 14 conflict or locked, 15 server error or rate limited. Earlier: 1 or 2. |
+| v0.13.0 | `cloud run` and `cloud pull` take repeatable `--vault` (merged left to right; a duplicate key is refused unless `--allow-override`). |
+| v0.13.0 | GCP secret names are lowercased with `-` in `convert --to gcp-secrets`, `migrate --to gcp-secret-manager` and `cloud export --to gcp-secrets` (`DB_URL` becomes `db-url`). `convert --to vercel` marks secret-looking variables `sensitive`. `backup`/`restore --output -` is refused. |
+| v0.12.0 | `evnx parse` (names and flags, never values). `validate` reads stdin or JSON (`--env -`, `--input-format json`). `update --list`. Declining the shared overwrite prompt (e.g. `restore`, `cloud pull`) exits 4. |
+| v0.11.0 | `evnx run`. `template` with an unresolved placeholder exits 2. `scan -` reads stdin. `convert --only secrets\|public`. `spec check`. `--env-name` on `init` and `add`. `restore` defaults to the recorded file name. |
+| v0.10.7 | `update --check` exits 0/1/2 and has `--json`. |
+| v0.10.0 | `surface` was renamed `evnx commands` (the old name still works as an alias). |
+
+## References
+
+Each file starts with the evnx version it was generated from; confirm with `--help`.
+
+- [references/commands.md](references/commands.md) - per-command purpose, key flags, exit codes
+- [references/convert-formats.md](references/convert-formats.md) - `convert` targets and per-target rules
+- [references/cicd-integration.md](references/cicd-integration.md) - GitHub Action, scan gate, SARIF, pre-commit
+- Docs: https://docs.evnx.dev - Changelog: https://github.com/urwithajit9/evnx/blob/main/CHANGELOG.md
+- For `.env` format and security practice that does not depend on evnx, see the
+  `dotenv-best-practices` skill.

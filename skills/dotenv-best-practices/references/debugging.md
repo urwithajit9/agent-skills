@@ -1,6 +1,8 @@
 # .env Debugging Guide — 10 Common Bugs
 
-Source: [dotenv.space](https://dotenv.space)
+Source: [dotenv.space](https://dotenv.space). Examples are Python, JavaScript and Rust; the
+causes apply to any stack. Never print a variable's value while debugging; check that it is
+set, its length, or its name.
 
 ---
 
@@ -39,6 +41,12 @@ A real OS environment variable with the same name exists. By default, `load_dote
 ```python
 load_dotenv(override=True)  # force .env values over OS env
 ```
+
+**Cause D - Expansion order**
+`B=${A}/x` is empty or literal when `A` is defined *below* it, or when the loader does not
+expand at all. Loaders differ (Docker Compose and evnx v0.13.0+ read the value above the
+reference; others do not expand without an add-on). Define `A` first, and test with the
+loader you ship with. With evnx, `evnx validate` stops with an error naming the line to move.
 
 ---
 
@@ -268,10 +276,12 @@ if missing:
 print("✅ .env is complete")
 ```
 
-Or with evnx:
+Or with evnx (check `evnx diff --help` for your version):
 ```bash
-# evnx diff shows missing/extra variables between .env and .env.example
+# names missing from .env or extra vs .env.example; values are not compared to a template
 evnx diff
+# as a gate: fail only when .env lacks a key the template has
+evnx diff --fail-on missing
 ```
 
 **Fix — Standardize onboarding:**

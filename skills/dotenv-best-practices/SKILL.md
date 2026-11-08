@@ -6,200 +6,164 @@ description: >
   "check if .env is in gitignore", "handle secrets in CI/CD", "configure environment for
   Django / FastAPI / Next.js / Vite / Rust / Docker", "what variables should go in .env",
   "should I commit this env file", ".env not loading", "variable is undefined", "boolean
-  env var bug", "NEXT_PUBLIC prefix", "VITE_ prefix", "secrets in GitHub Actions",
-  "environment variable best practices", or any mention of .env, dotenv, or secret leaks.
-  Works with any stack and any tool — does not require evnx to be installed.
+  env var bug", "NEXT_PUBLIC prefix", "VITE_ prefix", "variable expansion in .env",
+  "secrets in GitHub Actions", "environment variable best practices", or any mention of .env,
+  dotenv, or secret leaks. Works with any stack and any tool - does not require evnx.
 license: MIT
 metadata:
   author: urwithajit9
-  version: "1.0.0"
+  version: "2.0.0"
   homepage: https://dotenv.space
   repository: https://github.com/urwithajit9/agent-skills
 ---
 
 # .env Best Practices
 
-Reference: [dotenv.space](https://dotenv.space) — the complete `.env` guide for every stack.
+Tool-neutral guidance for `.env` files and environment-based configuration. Reference:
+[dotenv.space](https://dotenv.space). If the `evnx` CLI is installed, it automates several of
+these checks (`evnx validate`, `evnx scan --staged`, `evnx diff`, `evnx doctor`); use the
+`evnx-cli` skill for that, and run `evnx --version` and `evnx <command> --help` before relying
+on any flag.
 
-## Core Rules (Never Break These)
+## Core rules
 
-1. **Never commit `.env`** — add it to `.gitignore` before the first commit, not after.
-2. **Always commit `.env.example`** — strip real values, keep all variable names and comments.
-3. **Rotate immediately if exposed** — deleting the file is not enough. Git history retains it. Use `git filter-repo` or BFG Repo Cleaner AND rotate every key.
-4. **Bots scan GitHub continuously.** Exposed keys are found within minutes of a push.
-5. **Every env var is a string.** Parse types explicitly in application code.
+1. **Never commit `.env`.** Add it to `.gitignore` before the first commit, not after.
+2. **Always commit `.env.example`.** Keep every variable name and comment, with placeholder
+   values only.
+3. **Never print or paste secret values** into chats, logs, tickets or commit messages. Work
+   with variable names; when you must show a value, mask it.
+4. **Rotate immediately if exposed.** Deleting the file is not enough: git history keeps it.
+   Revoke and reissue the key at the provider first, then purge history (`git filter-repo` or
+   BFG) if needed. Bots scan public repositories continuously.
+5. **Every env var is a string.** Parse booleans, numbers and lists explicitly in code.
+6. **Fail fast.** Validate required variables at startup, not when first used.
+7. **`.env` is for local development.** In CI and production, inject variables from the
+   platform's secret store or a secrets manager.
 
-## The File Hierarchy
+## The file hierarchy
 
 | File | Commit? | Purpose |
 |---|---|---|
-| `.env` | ❌ Never | Local real values — your actual secrets |
-| `.env.example` | ✅ Always | Template with placeholder values — the team contract |
-| `.env.local` | ❌ Never | Machine-specific overrides (Next.js / Vite convention) |
-| `.env.development` | ✅ If no real secrets | Non-secret dev defaults shared by the team |
-| `.env.production` | ❌ Never | Managed by infra/CI — never lives in the repo |
-| `.env.test` | ✅ If mock keys only | CI test values using fake/mock credentials |
+| `.env` | Never | Local real values |
+| `.env.example` | Always | Template with placeholders: the team contract |
+| `.env.local` | Never | Machine-specific overrides (Next.js / Vite convention) |
+| `.env.development` | If no real secrets | Shared non-secret dev defaults |
+| `.env.production` | Never | Managed by infra/CI; does not live in the repo |
+| `.env.test` | If mock keys only | Test values with fake credentials |
 
-## The .gitignore Template
+Which files a framework loads, and in what order, is framework-specific. Check its docs.
+
+## .gitignore
 
 ```gitignore
-# .env files — never commit
+# env files - never commit
 .env
-.env.local
-.env.production
-.env.staging
-.env.*.local
-
-# DO commit this — do not add to .gitignore:
-# .env.example
+.env.*
+!.env.example
 ```
 
-## The .env.example Template Pattern
+`.env.*` plus the `!.env.example` exception covers `.env.local`, `.env.production` and the rest
+in three lines. If you do want to share `.env.development` or `.env.test`, add `!` lines for
+them. Verify: `git check-ignore -v .env`.
+
+## .env.example pattern
 
 ```env
 # Application
 APP_NAME=MyApp
 SECRET_KEY=CHANGE_ME_generate_with_openssl_rand_hex_32
-DEBUG=False
+DEBUG=false
 PORT=8000
 
 # Database
 DATABASE_URL=postgresql://user:password@localhost:5432/dbname
-REDIS_URL=redis://localhost:6379/0
 
-# Third-party APIs — get keys from the provider dashboard
+# Third-party APIs - get keys from the provider dashboard
 STRIPE_SECRET_KEY=sk_test_YOUR_KEY_HERE
-OPENAI_API_KEY=sk-proj-YOUR_KEY_HERE
-AWS_ACCESS_KEY_ID=YOUR_AWS_KEY_HERE
-AWS_SECRET_ACCESS_KEY=YOUR_AWS_SECRET_HERE
-
-# Feature flags
-ENABLE_FEATURE_X=False
 ```
 
-## Framework-Specific Rules
+Placeholders must be obviously fake. A placeholder shaped like a real key can trigger secret
+scanners, and a realistic-looking default can be mistaken for a working credential.
 
-### Next.js
-- `NEXT_PUBLIC_` prefix → inlined into browser bundle at **build time** (public, visible in DevTools)
-- No prefix → server-only (never reaches the browser)
-- Must exist at `next build` time, not just runtime. Pass to CI build step explicitly.
+## Syntax and expansion in brief
 
-### Vite
-- `VITE_` prefix → exposed to browser (`import.meta.env.VITE_X`)
-- No prefix → build-scripts only, not bundled
+The core format is `KEY=value` lines and `#` comments. Beyond that, parsers differ: quoting
+rules, inline comments, `export` prefixes, multi-line values, and above all **variable
+expansion** (`B=${A}/x`). Whether and how `${VAR}` expands, and whether it reads a value defined
+above or below, depends on the tool. Docker Compose and (since v0.13.0) evnx read the value
+assigned **above** the reference, top to bottom. Do not rely on a forward reference; define a
+variable before using it, and quote values containing `$` that should stay literal (single
+quotes in most parsers). Details and a portable subset: [references/format-spec.md](references/format-spec.md).
 
-### Django
-- Use `django-environ` or `python-dotenv`; never put real credentials in `settings.py`
-- `"False"` is a truthy string — always parse booleans explicitly
+## Framework notes
 
-### Rust
-- Use `dotenvy` for loading, `config` + `secrecy::SecretString` for type-safe production config
-- Always `.trim()` before `.parse()` — trailing whitespace silently breaks type parsing
+- **Next.js**: `NEXT_PUBLIC_` variables are inlined into the browser bundle at **build** time
+  (public). Others stay server-side. They must exist when `next build` runs.
+- **Vite**: only `VITE_`-prefixed variables reach client code (`import.meta.env`). Restart the
+  dev server after editing `.env`.
+- **Django / Python**: use a loader (`django-environ`, `python-dotenv`, `pydantic-settings`);
+  never put credentials in `settings.py`. `"False"` is a truthy string.
+- **Rust**: `dotenvy` to load; trim before parsing; use `secrecy::SecretString` for secrets.
+- **Docker / Compose**: use `env_file:` rather than inline `environment:` values for secrets;
+  `env_file` paths are relative to the Compose file. `${VAR}` inside `compose.yaml` is
+  interpolated from the project's `.env`, which is separate from what `env_file` passes to a
+  container. Never `ENV SECRET=...` in a Dockerfile: it is stored in the image layers.
 
-### Docker / Docker Compose
-- Use `env_file:` in compose, not `environment:` with inline values
-- Never `ENV SECRET_KEY=...` in Dockerfile — it's visible in every layer and `docker inspect`
-- Docker Compose resolves `env_file` paths relative to the Compose file location, not the CWD
-
-## The Boolean Trap (Extremely Common Bug)
+## The boolean trap
 
 ```python
-# ❌ WRONG — the string "False" is truthy in Python
+# wrong: the string "false" is truthy
 if os.getenv("DEBUG"):
     ...
 
-# ✅ CORRECT
-DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
+# right
+DEBUG = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes")
 ```
 
-```rust
-// ❌ WRONG
-let debug = std::env::var("DEBUG").unwrap_or("false".to_string());
-
-// ✅ CORRECT — trim and compare
-let debug = std::env::var("DEBUG")
-    .unwrap_or_default()
-    .trim()
-    .to_lowercase() == "true";
+```typescript
+const debug = process.env.DEBUG === "true";   // "false" is a truthy string otherwise
 ```
 
-## Common Bugs Quick Reference
+## Startup validation
 
-For detailed debugging patterns covering 10 frequent `.env` bugs (undefined variables, NEXT_PUBLIC in production, Docker path errors, boolean trap, Sentry leaks, Vite prefix, GitHub Actions masking, ALLOWED_HOSTS, Rust parse panics, silent teammate breakage), see [references/debugging.md](references/debugging.md).
+```python
+required = ["SECRET_KEY", "DATABASE_URL"]
+missing = [k for k in required if not os.getenv(k)]
+if missing:
+    raise RuntimeError(f"Missing required env vars: {missing}")
+```
 
-## CI/CD — No .env Files Exist Here
+```typescript
+for (const key of ["DATABASE_URL", "SECRET_KEY"] as const) {
+  if (!process.env[key]) throw new Error(`Missing required env var: ${key}`);
+}
+```
 
-In CI/CD pipelines, variables are injected from the platform's secret store. `.env` files should never be present.
+## CI/CD: no .env files
+
+Inject variables from the platform's secret store:
 
 ```yaml
-# GitHub Actions — correct pattern
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
 ```
 
-**Enable GitHub Push Protection now:** Settings → Code security → Push protection. Blocks 100+ secret patterns automatically. Free, takes 30 seconds. Do it before you forget.
+Turn on your host's secret scanning / push protection where available, and add a
+pre-commit scan of staged files. Never `echo` a secret in a job; masking is best effort.
 
-## Startup Validation — Fail Fast
+## When to graduate from .env
 
-Always validate required variables at startup, not at runtime when the missing variable is first used.
+Use a secrets manager for production: cloud-native (AWS Secrets Manager, GCP Secret Manager,
+Azure Key Vault), HashiCorp Vault, or a SaaS/open-source manager (Doppler, Infisical, and
+similar). Pick by where the workload runs and who needs access; check current pricing and
+features on the vendor's site. Use separate values per environment, and rotate on a schedule.
 
-```python
-# Python — validate at import time
-def validate_env():
-    required = ["SECRET_KEY", "DATABASE_URL", "STRIPE_SECRET_KEY"]
-    missing = [k for k in required if not os.getenv(k)]
-    if missing:
-        raise RuntimeError(f"Missing required env vars: {missing}")
+## Further reference
 
-validate_env()
-```
-
-```typescript
-// TypeScript / Node.js
-const required = ["DATABASE_URL", "SECRET_KEY"] as const;
-for (const key of required) {
-  if (!process.env[key]) throw new Error(`Missing required env var: ${key}`);
-}
-```
-
-## Secret Managers — When to Graduate from .env
-
-`.env` is for local development. For production, use a secrets manager.
-
-| Tool | Best For | Cost |
-|---|---|---|
-| AWS Secrets Manager | AWS workloads | ~$0.40/secret/mo |
-| HashiCorp Vault | Multi-cloud, enterprise | Free self-hosted |
-| Doppler | Multi-env teams, great DX | Free tier / $6+/mo |
-| Infisical | Open-source Doppler alt | Free self-hosted |
-| GCP Secret Manager | GCP workloads | $0.06/10k accesses |
-| Azure Key Vault | Azure workloads | $0.03/10k ops |
-
-## Using evnx for Automated Validation
-
-If `evnx` is available, use it for automated validation and secret scanning:
-
-```bash
-# Install evnx (choose your preferred method)
-cargo install evnx                    # Rust/Cargo
-npm install -g @evnx/cli              # Node.js/npm
-pip install evnx                      # Python/pip
-
-# Run validation and secret scanning
-evnx validate --strict
-evnx scan
-evnx diff                             # Compare .env with .env.example
-```
-
-See the `evnx-cli` skill for the complete command reference and CI/CD integration patterns.
-
-## Further Reference
-
-- [references/format-spec.md](references/format-spec.md) — `.env` format grammar and edge cases
-- [references/security-checklist.md](references/security-checklist.md) — full pre-deploy checklist
-- [references/debugging.md](references/debugging.md) — 10 common bugs with fixes
-- [dotenv.space](https://dotenv.space) — complete multi-stack reference
+- [references/format-spec.md](references/format-spec.md) - syntax, quoting, expansion, key names
+- [references/security-checklist.md](references/security-checklist.md) - pre-project and pre-deploy checklist, incident steps
+- [references/debugging.md](references/debugging.md) - 10 common bugs with fixes
+- [dotenv.space](https://dotenv.space) - multi-stack reference

@@ -8,34 +8,29 @@ Full pre-project and pre-deploy checklist. Source: [dotenv.space](https://dotenv
 - [ ] Create `.env.example` with all variable names and placeholder values
 - [ ] Commit `.env.example` to the repository
 - [ ] Set file permissions: `chmod 600 .env`
-- [ ] Enable GitHub Push Protection (Settings → Code security → Push protection)
+- [ ] Enable your host's push protection / secret scanning where available (on GitHub: Settings → Code security)
 - [ ] Install a pre-commit hook for secret scanning
 
-### Pre-commit Hook Setup (Recommended)
+### Pre-commit secret scanning (recommended)
+
+Scan what is being committed, not the whole working tree: your real, git-ignored `.env`
+should never block a commit.
 
 ```yaml
-# .pre-commit-config.yaml
+# .pre-commit-config.yaml - evnx (needs evnx installed; see the evnx-cli skill)
 repos:
-  - repo: local
+  - repo: https://github.com/urwithajit9/evnx
+    rev: v0.13.0          # use a release tag; `evnx scan hook install` is the no-framework option
     hooks:
-      - id: evnx-validate
-        name: Validate .env files
-        entry: evnx validate --strict
-        language: system
-        pass_filenames: false
-
-      - id: evnx-scan
-        name: Scan for secrets
-        entry: evnx scan --exit-zero
-        language: system
-        pass_filenames: false
+      - id: evnx-scan-installed
 ```
 
-Alternative using `detect-secrets`:
+Tool-neutral alternative:
+
 ```yaml
 repos:
   - repo: https://github.com/Yelp/detect-secrets
-    rev: v1.4.0
+    rev: v1.5.0           # pin to the current release
     hooks:
       - id: detect-secrets
         args: ['--baseline', '.secrets.baseline']
@@ -80,17 +75,17 @@ repos:
 
 | Secret Type | Risk | Notes |
 |---|---|---|
-| AWS Access Key (`AKIA...`) | 🔴 Critical | Can incur massive costs instantly |
-| AWS Secret Access Key | 🔴 Critical | Paired with above |
-| Stripe Secret Key (`sk_live_...`) | 🔴 Critical | Full payment access |
-| Database URL with credentials | 🔴 Critical | Direct data access |
-| OpenAI API Key | 🟠 High | Billing + data access |
-| Anthropic API Key | 🟠 High | Billing + data access |
-| GitHub Personal Access Token | 🟠 High | Repo/org access |
-| JWT Secret | 🟠 High | Authentication bypass |
-| Stripe Publishable Key (`pk_...`) | 🟡 Low | Public by design |
-| Sentry DSN | 🟡 Low | Error reporting only |
-| `NEXT_PUBLIC_` variables | 🟡 Low | Public by design |
+| AWS Access Key (`AKIA...`) | Critical | Can incur massive costs instantly |
+| AWS Secret Access Key | Critical | Paired with above |
+| Stripe Secret Key (`sk_live_...`) | Critical | Full payment access |
+| Database URL with credentials | Critical | Direct data access |
+| OpenAI API Key | High | Billing + data access |
+| Anthropic API Key | High | Billing + data access |
+| GitHub Personal Access Token | High | Repo/org access |
+| JWT Secret | High | Authentication bypass |
+| Stripe Publishable Key (`pk_...`) | Low | Public by design |
+| Sentry DSN | Low | Error reporting only |
+| `NEXT_PUBLIC_` variables | Low | Public by design |
 
 ## If a Secret Was Exposed — Emergency Checklist
 
@@ -111,38 +106,23 @@ repos:
 6. **Issue new credentials** with proper secrets management in place
 7. **Add the exposed pattern** to your pre-commit hook blocklist
 
-## Automated Scanning with evnx
+## Automated scanning with evnx
+
+If evnx is installed (check `evnx --version`; flags below are from `evnx <command> --help` and
+may differ by version):
 
 ```bash
-# Scan current directory for secrets
-evnx scan
-
-# Scan specific directory
-evnx scan --path src/
-
-# Output SARIF for GitHub Security tab
-evnx scan --format sarif > scan-results.sarif
-
-# In CI — don't fail the build but still report
-evnx scan --exit-zero --format json
-
-# Validate .env is clean of placeholders and weak secrets
-evnx validate --strict
+evnx scan --staged                   # what is about to be committed
+evnx scan --severity high            # whole tree, blocking threshold for CI
+evnx scan --format sarif > evnx.sarif   # for GitHub's Security tab
+evnx scan hook install               # run the staged scan before every commit
+evnx scan rules list                 # which patterns this version detects
+evnx doctor                          # gitignore, file modes, env files git would commit
 ```
 
-## Secret Pattern Detection
+`severity` says how bad a finding is if real; `confidence` says how sure the scanner is.
+`--exit-zero` makes a scan pass even with findings: use it only for advisory steps. A scan that
+exits 2 did not run and is not a clean result. For CI wiring, see the `evnx-cli` skill.
 
-`evnx scan` detects these patterns by default:
-
-| Pattern | Example |
-|---|---|
-| AWS Access Key | `AKIA[0-9A-Z]{16}` |
-| Stripe Secret Key | `sk_live_[0-9a-zA-Z]{24}` |
-| Stripe Test Key | `sk_test_[0-9a-zA-Z]{24}` |
-| GitHub Token | `ghp_[0-9a-zA-Z]{36}` |
-| OpenAI API Key | `sk-proj-[0-9a-zA-Z-_]{48}` |
-| Anthropic API Key | `sk-ant-[0-9a-zA-Z-_]{32,}` |
-| RSA Private Key | `-----BEGIN RSA PRIVATE KEY-----` |
-| High-entropy strings | Entropy > 4.5 in suspicious contexts |
-
-For the full pattern library and custom rules, see the [evnx documentation](https://evnx.dev).
+Scanners differ in what they detect. `evnx scan rules list` shows the current list; do not
+assume a provider is covered, and do not treat a clean scan as proof that nothing leaked.
