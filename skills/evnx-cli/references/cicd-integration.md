@@ -1,315 +1,166 @@
-# evnx CI/CD Integration Guide
+# evnx in CI/CD
 
-## GitHub Actions — Full Workflow
+**Written against evnx 0.13.0 and `urwithajit9/evnx-action` v1 - confirm flags with
+`evnx <cmd> --help` and action inputs in the action's README / `action.yml`.**
+Sources: https://github.com/urwithajit9/evnx-action, `.pre-commit-hooks.yaml` in
+https://github.com/urwithajit9/evnx, https://docs.evnx.dev.
+
+## Principles
+
+- **A CI runner has no `.env`.** Values come from the platform's secret store. CI checks the
+  committed files: scan the repo, compare `.env.example` with the contract, and keep any `.env`
+  out of the tree.
+- **Pin the CLI version** in CI so a new release cannot change a gate overnight; upgrade
+  deliberately and read the CHANGELOG (`scan` gates especially: new rules add findings).
+- **Exit codes decide the build.** 0 pass, 1 findings, 2 evnx could not run. Do not add
+  `--exit-zero` to a gate; it makes the step pass even when findings exist (a scan that could
+  not run still exits 2). Use it only for an advisory, non-blocking step.
+- **No prompts in CI.** Pass explicit flags, `--yes` where a command would ask, and
+  `--format json` when a later step reads the result.
+- **Do not use `--skip-without-env` in CI.** It exists for pre-commit hooks on a fresh clone;
+  in CI a check that never ran must not pass.
+- Never echo secret values into logs. Avoid `--show-values` / `--values` in CI.
+
+## The usual gates
+
+```bash
+evnx scan --severity high                 # block on high and critical findings
+evnx validate --strict --format github-actions   # needs a .env or --env pointing at one
+evnx diff --fail-on missing               # .env lacks a key the template has (needs a .env)
+evnx sync --check --direction forward     # .env.example lacks a name .env has (needs a .env)
+evnx spec check                           # .env.example vs the [vars] contract; needs no .env
+evnx doctor --strict --format json        # needs an env file in the tree
+```
+
+`validate`, `diff`, `sync` and `doctor` compare against a local `.env`; on a runner that has only
+the committed files, run `scan` and `spec check` there and run the others locally or in a hook.
+
+`--severity high` is the usual blocking threshold. Before 0.13.0, `--severity` filtered on
+confidence (there was no `--confidence`); on an older CLI read `evnx scan --help` before
+choosing a gate.
+
+For an existing repo with accepted findings: `evnx scan --update-baseline` once, review and
+commit `.evnx/baseline.json` (fingerprints, no values); later runs fail only on new findings.
+
+## GitHub Actions: evnx-action
 
 ```yaml
-name: Environment Validation
+- uses: actions/checkout@v4
+- uses: urwithajit9/evnx-action@v1
+  with:
+    command: scan
+    format: github          # inline PR annotations
+    version: v0.13.0        # pin the CLI (see below)
+```
 
-on: [push, pull_request]
+Inputs (from `action.yml`; check it for the current set):
 
+| Input | Meaning | Default |
+|---|---|---|
+| `command` | `scan`, `validate`, `diff`, `doctor`, `convert`, `sync` | `scan` |
+| `path` | Directory or file (positional path for `scan`, `--path` for `doctor`) | `.` |
+| `format` | Passed as `--format`. `scan`: pretty, json, sarif, github. `validate`: pretty, json, github-actions. Empty means the command's own default | empty |
+| `strict` | `--strict` (validate) | `false` |
+| `exit_zero` | Report but always exit 0 | `false` |
+| `env_file`, `example_file` | `--env` / `--example` for validate, diff, sync | `.env`, `.env.example` |
+| `convert_to`, `convert_output` | `--to` / `--output` for `convert` | `json`, empty |
+| `version` | **evnx CLI version** to install, e.g. `v0.13.0` or `0.13.0` | `latest` |
+
+Outputs: `findings` (count), `result` (the command's stdout), `exit_code`.
+
+Two version numbers: `uses: urwithajit9/evnx-action@v1` is the **action**; `with: version:` is
+the **CLI**. Pinning one does not pin the other. The install verifies the release's `.sha256`
+before running the binary. Linux runners (x86_64, aarch64) only.
+
+Limits of the action: it has no `--severity`, `--confidence` or `--baseline` input, and for
+`diff` it forces JSON and fails on missing or extra keys only (a template's empty values are
+not drift). For those controls, call the CLI directly. The action leaves `evnx` on `PATH`, so
+later `run:` steps can use it:
+
+```yaml
+- uses: urwithajit9/evnx-action@v1       # installs evnx (pinned); the scan itself is advisory here
+  with:
+    command: scan
+    exit_zero: "true"
+    version: v0.13.0
+- name: Gate on high severity
+  run: evnx scan --severity high
+```
+
+## SARIF to the Security tab
+
+`--format sarif` prints SARIF 2.1.0 on stdout. Findings carry the stable rule id as `ruleId`
+and `severity`/`confidence` in `properties`. Write it to a file and upload with
+`upload-sarif` v4:
+
+```yaml
 jobs:
-  validate-env:
+  scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write      # needed for the upload
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install evnx
-        run: |
-          curl -sSL https://raw.githubusercontent.com/urwithajit9/evnx/main/install.sh | bash
-
-      - name: Validate .env.example
-        run: evnx validate --file .env.example --strict --format github-actions
-
-      - name: Check .env matches .env.example
-        run: evnx diff --format json
-        # Note: run after generating .env from secrets (see below)
-
-      - name: Scan repository for secrets
-        run: evnx scan --format sarif > scan-results.sarif
-
-      - name: Upload SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v2
+      - uses: urwithajit9/evnx-action@v1
+        with: { command: scan, exit_zero: "true", version: v0.13.0 }   # installs evnx on PATH
+      - name: Scan (SARIF)
+        run: evnx scan --format sarif --exit-zero > evnx.sarif
+      - uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
-          sarif_file: scan-results.sarif
+          sarif_file: evnx.sarif
+      - name: Gate
+        run: evnx scan --severity high
 ```
 
-### Generate .env from GitHub Secrets for Testing
+The action does not write a SARIF file for you; its `result` output holds the text. The
+redirect above is what produces `evnx.sarif`. Fork pull requests get a read-only token and
+cannot upload SARIF.
+
+## pre-commit and prek
+
+Hooks are defined in the evnx repository's `.pre-commit-hooks.yaml` and work with both
+[pre-commit](https://pre-commit.com) and [prek](https://github.com/j178/prek) through the same
+`.pre-commit-config.yaml`:
 
 ```yaml
-- name: Generate .env from secrets
-  run: |
-    cat > .env << EOF
-    DATABASE_URL=${{ secrets.DATABASE_URL }}
-    SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
-    STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
-    OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-    EOF
-
-- name: Validate generated .env
-  run: evnx validate --strict
-
-- name: Diff .env against .env.example
-  run: evnx diff
-```
-
-### Publish Secrets to GitHub Actions from .env
-
-```bash
-# One-time setup: migrate local .env to GitHub Actions secrets
-evnx migrate \
-  --from env-file \
-  --to github-actions \
-  --repo urwithajit9/myproject \
-  --github-token $GITHUB_TOKEN
-```
-
----
-
-## GitLab CI
-
-```yaml
-stages:
-  - validate
-  - test
-  - deploy
-
-validate-env:
-  stage: validate
-  image: alpine:latest
-  before_script:
-    - apk add --no-cache curl bash
-    - curl -sSL https://raw.githubusercontent.com/urwithajit9/evnx/main/install.sh | bash
-  script:
-    - evnx validate --strict --format json
-    - evnx scan --format sarif > scan.sarif
-  artifacts:
-    reports:
-      sast: scan.sarif
-  only:
-    - merge_requests
-    - main
-
-generate-env:
-  stage: test
-  script:
-    - |
-      cat > .env << EOF
-      DATABASE_URL=${CI_DATABASE_URL}
-      SECRET_KEY=${CI_SECRET_KEY}
-      EOF
-    - evnx validate
-    - evnx diff
-```
-
----
-
-## Pre-commit Hooks
-
-### Using pre-commit framework
-
-```yaml
-# .pre-commit-config.yaml
 repos:
-  - repo: local
+  - repo: https://github.com/urwithajit9/evnx
+    rev: v0.13.0            # a release tag; `evnx-scan-installed` exists from v0.13.0
     hooks:
-      - id: evnx-validate
-        name: Validate .env files
-        entry: evnx validate --strict
-        language: system
-        pass_filenames: false
-        stages: [commit]
-
-      - id: evnx-scan
-        name: Scan for secrets
-        entry: evnx scan --exit-zero
-        language: system
-        pass_filenames: false
-        stages: [commit, push]
-
-      - id: evnx-sync-check
-        name: Check .env.example is up to date
-        entry: evnx diff
-        language: system
-        pass_filenames: false
-        stages: [push]
+      - id: evnx-scan-installed
+      - id: evnx-spec-check
 ```
 
-Install: `pre-commit install`
+| Hook id | Runs | Notes |
+|---|---|---|
+| `evnx-scan` | `evnx scan` on staged paths | builds evnx from source (`language: rust`), version pinned by `rev:` |
+| `evnx-scan-installed` | `evnx scan` on staged paths | uses the `evnx` on `PATH` (`language: system`): no build, but the hook **fails** if evnx is not installed |
+| `evnx-validate` | `evnx validate --strict` | runs when `.env*` files change |
+| `evnx-diff` | `evnx diff --fail-on missing --skip-without-env` | blocks when `.env` lacks a template key |
+| `evnx-sync` | `evnx sync --check --direction forward --skip-without-env` | blocks when `.env` has names the template lacks |
+| `evnx-sync-fix` | `evnx sync --force --skip-without-env` | writes placeholders to the template; the commit stops once, stage and retry |
+| `evnx-doctor` | `evnx doctor --skip-without-env` | fails on errors; warnings do not fail |
+| `evnx-spec-check` | `evnx spec check` | runs when `.evnx.toml` or `.env*` change; needs no `.env` |
+| `evnx-scan-push` | `evnx scan --format sarif` | pre-push stage |
 
-### Manual Git Hook
+Without pre-commit, `evnx scan hook install` writes a managed block into `.git/hooks/pre-commit`
+(honours `core.hooksPath`) that runs `evnx scan --staged`. It blocks the commit when secrets are
+staged, when the scan cannot run, and when evnx is not on `PATH`. It refuses to touch a hook
+that pre-commit or prek generated; use `evnx-scan-installed` there. `evnx scan hook status`
+shows state; `git config hooks.evnx-scan false` turns it off; `git commit --no-verify` skips it
+once (tell the user before you do either).
 
-```bash
-# .git/hooks/pre-commit
-#!/bin/bash
-set -e
+## Other CI systems
 
-if command -v evnx &> /dev/null; then
-  echo "🔍 Scanning for secrets..."
-  evnx scan --exit-zero
+Same gates, installed from your channel (`evnx update` prints the commands, e.g.
+`npm install -g @evnx/cli@<version>`, `pip install evnx==<version>`,
+`curl -fsSL https://dotenv.space/install.sh | bash`). Use `--format json` for machines and
+`--format github` / `--format github-actions` only on GitHub.
 
-  echo "✅ Validating .env.example..."
-  evnx validate --file .env.example --strict
-else
-  echo "⚠️  evnx not installed — skipping .env validation"
-  echo "   Install: cargo install evnx"
-fi
-```
-
-```bash
-chmod +x .git/hooks/pre-commit
-```
-
----
-
-## Makefile Integration
-
-```makefile
-# Makefile
-
-.PHONY: setup validate scan check-env deploy-secrets
-
-## Setup local development environment
-setup:
-	@cp -n .env.example .env || true
-	@echo "✅ .env created from .env.example — fill in real values"
-	@evnx validate
-
-## Validate .env files
-validate:
-	evnx validate --strict
-	evnx diff
-
-## Scan for accidentally committed secrets
-scan:
-	evnx scan
-
-## Run all environment checks
-check-env: validate scan
-	evnx doctor
-
-## Deploy secrets to GitHub Actions (set GITHUB_TOKEN first)
-deploy-secrets:
-	evnx migrate \
-		--from env-file \
-		--to github-actions \
-		--repo $(GITHUB_REPO) \
-		--github-token $(GITHUB_TOKEN) \
-		--dry-run
-	@echo "Run with CONFIRM=1 to apply"
-```
-
----
-
-## Docker / Docker Compose Integration
-
-```yaml
-# docker-compose.yml
-services:
-  api:
-    build: .
-    env_file:
-      - .env
-    volumes:
-      - .:/app
-
-  validate:
-    image: alpine:latest
-    command: |
-      sh -c "
-        curl -sSL https://raw.githubusercontent.com/urwithajit9/evnx/main/install.sh | bash
-        evnx validate --strict
-        evnx scan
-      "
-    volumes:
-      - ./.env:/app/.env:ro
-    working_dir: /app
-```
-
----
-
-## AWS Deployment Pattern
-
-```bash
-# 1. Convert .env to AWS Secrets Manager format and create secret
-evnx convert --to aws-secrets | \
-  aws secretsmanager create-secret \
-    --name prod/myapp/config \
-    --secret-string file:///dev/stdin
-
-# 2. Or migrate directly with evnx
-evnx migrate \
-  --to aws-secrets-manager \
-  --secret-name prod/myapp/config \
-  --dry-run  # preview first
-
-# 3. Generate Kubernetes secret manifest
-evnx convert --to kubernetes \
-  --include "DB_*,REDIS_*,SECRET_*" \
-  --output k8s/secrets.yaml
-
-# 4. Apply
-kubectl apply -f k8s/secrets.yaml
-```
-
----
-
-## Doppler Migration Pattern
-
-```bash
-# Step 1: Preview what will be migrated
-evnx migrate \
-  --to doppler \
-  --project myproject \
-  --config dev \
-  --dry-run
-
-# Step 2: Execute migration
-evnx migrate \
-  --to doppler \
-  --project myproject \
-  --config dev
-
-# Step 3: Verify by running app with Doppler injecting secrets
-doppler run -- your-app-start-command
-```
-
----
-
-## Jenkins Pipeline
-
-```groovy
-pipeline {
-    agent any
-    stages {
-        stage('Validate Environment') {
-            steps {
-                sh '''
-                    curl -sSL https://raw.githubusercontent.com/urwithajit9/evnx/main/install.sh | bash
-                    evnx validate --strict --format json
-                    evnx scan --format sarif > scan-results.sarif
-                '''
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'scan-results.sarif', allowEmptyArchive: true
-                }
-            }
-        }
-    }
-}
-```
-
----
-
-## evnx in CI: Format Cheat Sheet
-
-| Scenario | Command |
-|---|---|
-| Fail CI on any validation error | `evnx validate --strict` |
-| Fail CI only on errors, not warnings | `evnx validate` |
-| Scan and upload to GitHub Security | `evnx scan --format sarif > results.sarif` |
-| Scan without failing the build | `evnx scan --exit-zero` |
-| Check .env vs .env.example | `evnx diff` |
-| Machine-readable output for parsing | `evnx validate --format json` |
-| GitHub Actions annotation format | `evnx validate --format github-actions` |
+evnx cloud in CI: create a vault-scoped token (`evnx auth token create <name> --scope <vault>`),
+store it as the secret `EVNX_TOKEN`, and pass the master password with `--password-stdin` from
+the CI secret store. A token does not decrypt on its own. Exit codes 10-15 distinguish "sign in
+again" (10) from "forbidden" (11), plan limit (12), unreachable (13), conflict (14) and server
+error or rate limit (15); retry only 13 and 15.
