@@ -1,92 +1,91 @@
 # evnx convert - targets and rules
 
-**Generated from evnx 0.13.0 - confirm with `evnx convert --help`.** The target list grows
+**Written against evnx 0.16.0 - confirm with `evnx convert --help`.** The target list grows
 between releases; the `--to` line of `evnx convert --help` is authoritative, and
 `evnx commands --json` lists every flag. Docs: https://docs.evnx.dev/cli/commands/convert
 
+`convert` writes a file or prints one; `migrate` talks to a provider (or prints the provider's
+commands). To move secrets into a manager, prefer `evnx migrate --to <target> --dry-run`, then
+`--print-only` or `-o FILE` to review the commands first.
+
 ## Handle the output as a secret
 
-The output of `convert` holds every value from the `.env`. Preview on stdout only when the user
-needs to see the shape (and never paste real values into chat). Write to a file with
-`-o/--output`: evnx creates it with mode 0600, refuses to replace an existing file without
-`--force`, never replaces the input, and offers to add the file to `.gitignore`
-(`--gitignore` / `--no-gitignore` answer that without a prompt). `-q` is silent on success.
+The output holds every value from the `.env`. Preview on stdout only when the user needs to see
+the shape, and never paste real values into chat. Write to a file with `-o/--output`: evnx
+creates it with mode 0600, refuses to replace an existing file without `--force`, never replaces
+the input, and asks to add the file to `.gitignore` (`--gitignore` / `--no-gitignore` /
+`--yes` answer without a prompt; with no terminal it warns). `-n/--dry-run` with `-o` checks
+everything and writes nothing. `-q` is silent on success.
 
-## Targets (0.13.0: 14)
+## Input
+
+`--env FILE` (default `.env`, or `[defaults] env_name`), `--env-name NAME`, `--env -` for stdin.
+`--from json` reads a flat `{"KEY": "value"}` object (every value a string), so
+`convert --to json` and `convert --from json --to dotenv` round-trip names, values and order.
+
+## Targets (0.16.0: 15)
 
 | `--to` | What you get | Required flags |
 |---|---|---|
 | `json` | JSON object | |
-| `yaml` (alias `yml`) | YAML mapping | |
+| `yaml` (alias `yml`) | YAML mapping, every value quoted | |
 | `shell` | `export` lines | |
+| `dotenv` (alias `env`) | A `.env` that evnx's parser reads back exactly | |
 | `docker-compose` (alias `compose`) | `environment:` list | |
-| `kubernetes` (alias `k8s`) | `Secret` manifest; `stringData:` by default, base64 `data:` with `--base64` | `--name`; optional `--namespace` |
-| `terraform` (alias `tf`) | `.tfvars`-style assignments (names lowercased) | |
-| `github-actions` (alias `gh-actions`) | Text to paste into the GitHub web form | |
+| `kubernetes` (alias `k8s`) | `Secret` with `stringData:`; `--base64` for `data:`; `--kind configmap` or `--kind split` (Secret for secrets, ConfigMap `<name>-config` for the rest) | `--name`; optional `--namespace` |
+| `terraform` (alias `tf`) | `.tfvars` assignments, names as written; `--terraform-declarations` for `variable` blocks (secrets `sensitive = true`, no default) | |
+| `github` | Text to paste into the GitHub web form | |
 | `aws-secrets` | JSON for `aws secretsmanager create-secret` | |
-| `gcp-secrets` | Shell script that creates or updates each secret | `--project` |
-| `azure-keyvault` | Script using `az keyvault secret set` (secret read from a temp file, not argv) | `--vault-name` |
-| `heroku` | Bash script of `heroku config:set` commands | `--heroku-app` |
-| `vercel` (experimental) | JSON of `{key, value, type, target}` objects | |
-| `railway` (experimental) | The flat JSON `--to json` prints (Railway documents no import for it) | |
-| `doppler` (experimental) | JSON of `{computed, value}` objects (`doppler secrets upload` documents flat JSON instead) | |
+| `gcp-secrets` | Shell script that creates or updates each secret | `--project` (6 to 30 lowercase letters, digits, `-`) |
+| `azure-keyvault` | Script using `az keyvault secret set` | `--vault-name` |
+| `heroku` | One `heroku config:set` call | `--heroku-app` (3 to 30 lowercase letters, digits, `-`) |
+| `vercel` | JSON of `{key, value, type, target}`; secret-looking names `sensitive` | |
+| `doppler` | Flat JSON for `doppler secrets upload` | |
+| `railway` (experimental) | Flat JSON; Railway documents no schema | |
 
-A missing required flag exits 2 and names the flag; a name flag for a different target
-(`--heroku-app` with `--to json`) is also an error. Experimental targets print a warning on stderr;
-check their output against the vendor's tool before relying on it. Omit `--to` for an interactive picker
-(needs a terminal; agents should always pass `--to`).
+`--to github-actions` and `--to gh-actions` were removed in 0.15.0 (exit 2; use `--to github`).
+A missing required flag exits 2 and names it; an invalid project or app name exits 2 before
+anything is printed; a target flag for another target (`--heroku-app` with `--to json`) is an
+error. The experimental target prints a warning on stderr. Omit `--to` only at a terminal (it
+opens a picker); agents always pass `--to`.
 
 ## Selecting and shaping variables
 
 - `--include 'AWS_*,DB_*'` / `--exclude '*_LOCAL'`: globs on names (`*`, `?`; case-sensitive;
   exclude wins).
-- `--only secrets` / `--only public`: split by the same classifier `scan` uses (name says
-  secret, or value looks like one). Typical use: public values to a build system, secrets to a
-  secret manager.
-- `--prefix APP_`, `--transform uppercase|lowercase|camelCase|snake_case` (prefix is applied
-  first).
+- `--only secrets` / `--only public`: split by the classifier `scan` uses (the name or the value
+  says secret). Typical use: public values to a build system, secrets to a secret manager.
+- `--prefix APP_` (letters, digits, `_`), `--transform uppercase|lowercase|camelCase|snake_case`
+  (prefix first).
 
 ## Rules that bite
 
-- **Collisions are refused (exit 2).** Two names that become one in the output (`Api` and `API`
-  under `uppercase`, or targets that fold case) name both and stop. `--allow-collisions` keeps
-  the last value; use it only on purpose.
-- **Empty result is exit 2.** An empty `.env`, or filters that match nothing. `--allow-empty`
+- **Collisions are refused (exit 2).** Two names that become one (`Api` and `API` under
+  `uppercase`, or a target that folds case or rewrites `_`) are named and nothing is written.
+  `--allow-collisions` keeps the last value; use it only on purpose.
+- **An empty result is exit 2** (an empty `.env`, or filters that match nothing). `--allow-empty`
   overrides.
-- **Names a target cannot hold are refused by name** and nothing is written (since 0.13.0).
-  Keys may contain `.`, `-`, `[`, `]`, a leading digit or non-ASCII letters in the `.env`, but:
+- **Names a target cannot hold are refused by name**, and nothing is written:
 
-  | Targets | Accept |
+  | Targets | Accept `.`, `-`, `[`, `]`, a leading digit, non-ASCII |
   |---|---|
-  | `json`, `yaml`, `docker-compose`, `aws-secrets` | any of them |
+  | `json`, `yaml`, `dotenv`, `docker-compose`, `aws-secrets` | all of them |
   | `kubernetes` | `.` and `-` |
-  | `terraform` | `-` |
-  | `gcp-secrets`, `azure-keyvault` | `-` |
-  | `shell`, `github-actions`, `vercel`, `heroku`, `doppler`, `railway` | letters, digits and `_` only |
+  | `terraform`, `gcp-secrets`, `azure-keyvault` | `-` |
+  | `shell`, `github`, `vercel`, `heroku`, `doppler`, `railway` | none: letters, digits and `_` only |
 
-  Fix by renaming the variable, or leave it out with `--exclude`. The `railway` row is not
-  verified against a published rule.
-- **GCP names are lowercased, with `_` written as `-`** (`DB_URL` becomes `db-url`). The same
-  name is used by `convert --to gcp-secrets`, `migrate --to gcp-secret-manager` and
-  `cloud export --to gcp-secrets` since 0.13.0. A project migrated with 0.12 or earlier has
-  upper-case secrets; the new run creates lower-case ones beside them. Do not delete the old
-  ones until the app reads the new names.
-- **Vercel `sensitive`** (since 0.13.0): secret-looking variables are written with
-  `"type": "sensitive"` and targets `production` and `preview` only, because Vercel rejects a
-  Sensitive variable in `development`. evnx says on stderr how many it left out of development.
-  Other variables stay `plain` for all three targets.
-- **Case-insensitive targets** (Azure Key Vault, GitHub) also report collisions on case.
-- `terraform` lowercases names. `kubernetes` writes `stringData:` (Kubernetes encodes it on
-  apply); add `--base64` only if you want base64 `data:`.
+  Rename the variable, or leave it out with `--exclude`.
+- **GCP names are lowercased, with `_` written as `-`** (`DB_URL` becomes `db-url`), the same in
+  `migrate --to gcp-secret-manager` and `cloud export --to gcp-secrets`.
+- **Vercel `sensitive`**: secret-looking variables get `"type": "sensitive"` in every target,
+  development included; others stay `plain`.
 
-## Examples (real, with fake values)
+## Examples (fake values)
 
 ```bash
 evnx convert --to json --include 'DB_*' --exclude '*_LOCAL'
-evnx convert --to kubernetes --name myapp-env --namespace prod -o k8s-secret.yaml
+evnx convert --to kubernetes --name myapp-env --namespace prod --kind split -o k8s.yaml
 evnx convert --to gcp-secrets --project my-gcp-project -o upload.sh   # read it, then run it
-evnx convert --env-name production --only secrets --to github-actions
+evnx convert --env-name production --only secrets --to github
+evnx convert --from json --to dotenv --env vars.json -o .env.imported
 ```
-
-For moving secrets into a manager, prefer `evnx migrate --to <target> --print-only` (prints the
-vendor commands to review first); see `evnx migrate --help` for targets and required flags.
