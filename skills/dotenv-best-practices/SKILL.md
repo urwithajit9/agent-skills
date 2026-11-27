@@ -12,7 +12,7 @@ description: >
 license: MIT
 metadata:
   author: urwithajit9
-  version: "2.0.0"
+  version: "2.1.0"
   homepage: https://dotenv.space
   repository: https://github.com/urwithajit9/agent-skills
 ---
