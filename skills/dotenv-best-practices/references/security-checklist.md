@@ -20,7 +20,7 @@ should never block a commit.
 # .pre-commit-config.yaml - evnx (needs evnx installed; see the evnx-cli skill)
 repos:
   - repo: https://github.com/urwithajit9/evnx
-    rev: v0.13.0          # use a release tag; `evnx scan hook install` is the no-framework option
+    rev: v0.16.0          # use a release tag; `evnx scan hook install` is the no-framework option
     hooks:
       - id: evnx-scan-installed
 ```
@@ -113,9 +113,11 @@ may differ by version):
 
 ```bash
 evnx scan --staged                   # what is about to be committed
+evnx scan --history origin/main..HEAD   # every file version the unpushed commits hold
 evnx scan --severity high            # whole tree, blocking threshold for CI
 evnx scan --format sarif > evnx.sarif   # for GitHub's Security tab
 evnx scan hook install               # run the staged scan before every commit
+evnx scan hook install --pre-push    # scan the commits of every push
 evnx scan rules list                 # which patterns this version detects
 evnx doctor                          # gitignore, file modes, env files git would commit
 ```

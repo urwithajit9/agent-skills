@@ -2,178 +2,192 @@
 name: evnx-cli
 description: >
   Use when working with the evnx CLI to manage .env files. Triggers on tasks like:
-  "validate my .env", "scan for secrets", "diff .env and .env.example", "convert .env to
-  JSON / YAML / Kubernetes / Docker / GitHub Actions / AWS / GCP / Terraform", "sync .env with
-  .env.example", "add or remove an environment variable", "migrate secrets to a secret manager",
-  "encrypt or restore a .env backup", "run a command with my .env", "scan staged changes",
-  "install a secret-scanning pre-commit hook", "set up evnx in CI/CD", "evnx doctor",
-  "evnx cloud / vault", or any mention of evnx. Also use when evnx is installed and the user
-  wants to validate, scan, convert, diff, sync, migrate, back up, or restore .env files.
+  "set up .env", "fill in my .env", "set or get an env variable", "import variables from a
+  JSON / YAML / properties file", "validate my .env", "scan for secrets", "scan git history for
+  leaked keys", "install a pre-commit or pre-push secret hook", "diff .env and .env.example",
+  "sync .env with .env.example", "convert .env to JSON / YAML / Kubernetes / Terraform / GitHub
+  / AWS / GCP", "migrate secrets to a secret manager", "encrypt or restore a .env backup",
+  "run a command with my .env", "set up evnx in CI/CD", "evnx doctor", "evnx cloud / vault",
+  "remove someone from our vaults", or any mention of evnx. Also use when evnx is installed and
+  the user wants to create, check, scan, convert, sync, back up or share .env files.
 license: MIT
 metadata:
   author: urwithajit9
-  version: "2.0.0"
+  version: "3.0.0"
+  evnx_version: "0.16.0"
   homepage: https://docs.evnx.dev
   repository: https://github.com/urwithajit9/agent-skills
 ---
 
 # evnx CLI
 
-evnx manages `.env` files: create and edit them, validate them against a template, scan for
-secrets, diff and sync environments, convert to deployment formats, migrate into secret
-managers, back up, and sync through an encrypted cloud.
+evnx manages `.env` files: create and edit them, check them against a template and a contract,
+scan files and git history for secrets, convert them to deployment formats, move them into
+secret managers, back them up, and share them through encrypted vaults.
 
-This skill holds the stable rules and the workflow. Flag lists and format lists change between
-releases, so they live in [references/](references/) and in the binary itself.
+This file holds the workflow and the rules, which change slowly. Flag lists, formats and
+per-release detail live in [references/](references/), each stamped with the evnx version it
+was checked against, and in the binary itself.
 
-## Before you act: check the version
+## Step one: check the version
 
-Run this first, once per session, before any other evnx command:
+This skill was written and checked against **evnx 0.16.0** (the pin, also `metadata.evnx_version`).
+Before any other evnx command, once per session, run:
 
 ```bash
 evnx --version
 ```
 
-- **The installed binary is the source of truth, not this skill.** For any command you are about
-  to use, run `evnx <command> --help` and use the flags it lists. For the whole surface at once
-  (commands, flags, compiled-in features, docs URLs) run `evnx commands --json`.
-- **Compare the version with the "Version notes" table below.** If a behaviour you rely on is
-  marked "since vX.Y.Z" and the installed version is older, do not assume it. Tell the user
-  what is missing and either use the older behaviour or suggest an upgrade.
-- **To upgrade:** `evnx update` prints the right upgrade command for how evnx was installed
-  (it changes nothing). `evnx update --check` asks GitHub whether a newer release exists
-  (exit 0 current, 1 newer exists, 2 could not tell). If several copies are installed,
-  `evnx update --list` shows which one runs. Let the user run the upgrade; do not install
-  software on your own.
-- **If the binary is newer than the table's last row,** trust `--help` over this skill, and
-  read the [CHANGELOG](https://github.com/urwithajit9/evnx/blob/main/CHANGELOG.md) for what
-  moved. Per-command pages: `https://docs.evnx.dev/cli/commands/<command>` (the exact URL is
-  the `docs_url` field in `evnx commands --json`).
-- **If `evnx` is not installed,** say so and point to the install channels `evnx update`
-  lists (`cargo install evnx`, `npm install -g @evnx/cli`, `pip install evnx`, Homebrew, Scoop,
-  winget, or the install script). A build compiled without some features
-  lacks the matching commands (`cloud`, `migrate`, `backup`, network access for
-  `update --check`); `evnx commands` shows which features this build has.
+Then follow the case that matches. `<pin>` below means the pinned version above.
+
+- **Same version as the pin:** follow this skill.
+- **Not installed:** install exactly the pinned version. First tell the user which command you
+  will run and why; use the channel they prefer, and ask when you cannot tell.
+
+  ```bash
+  curl -fsSL https://evnx.dev/install.sh | EVNX_VERSION=<pin> bash   # Linux, macOS
+  npm install -g @evnx/cli@<pin>
+  pipx install evnx==<pin>                                           # or: pip install evnx==<pin>
+  cargo install evnx --version <pin> --locked --all-features
+  ```
+
+  For cargo, `--all-features` is needed: the default build has no `cloud`, `migrate`, `backup`
+  or network code, so those commands are missing (release archives, npm and pip have them all).
+  Homebrew (`brew install urwithajit9/evnx/evnx`) installs the latest release only and cannot
+  pin. Scoop (`scoop install evnx@<pin>`) and winget
+  (`winget install urwithajit9.evnx --version <pin>`) can request a version, if that version is
+  available to them; check `evnx --version` afterwards. Then run `evnx --version` again.
+- **Older than the pin:** never replace or upgrade it on your own. Tell the user what this skill
+  relies on that their version lacks (the rows of
+  [references/version-notes.md](references/version-notes.md) newer than their version), and
+  suggest the pinned upgrade with their channel's command above (`evnx update` prints the
+  upgrade command for how this copy was installed, and changes nothing). Until they upgrade,
+  use that binary's `evnx <command> --help`, and do not use a behaviour from a newer row.
+- **Newer than the pin:** keep it. The commands in this skill still work: exit codes, the JSON
+  `run` header and the flag spellings are stable (`docs/STABILITY.md` in the evnx repository),
+  and a removed spelling exits 2 and names its replacement. For anything this skill does not
+  cover, or a feature newer than the pin, run `evnx --help`, `evnx <command> --help` or
+  `evnx commands --json` and use what they say, not memory.
+
+`evnx commands --json` gives the whole surface at once: every command, flag, exit code, docs URL
+and the features this build was compiled with.
 
 ## Principles
 
-1. **Never print secret values.** Do not `cat` a `.env` or paste its values into chat, commits
-   or logs. `evnx parse` lists names and flags without values; `evnx scan` shows only masked
-   previews. Use `--values`/`--show-values` only when the user explicitly asks, and never
-   echo what comes back. Use fake or masked keys in any example you write.
-2. **Look before you write.** Prefer `--dry-run` for anything that edits files (`init`, `add`,
-   `remove`, `validate --fix`, `sync`, `restore`, `template`), and `--json` when you will read
-   the result programmatically instead of scraping text.
-3. **Read the exit code; "could not run" is not "clean".** Exit 0 is clean. Exit 1 means
-   findings or differences. Exit 2 means evnx could not give a verdict (bad flag, missing file,
-   no terminal to ask). Treat 2 as a failure to investigate, never as a pass. Exit 4 means the
-   user declined a prompt. Cloud commands use 10-15 (see below). Per-command tables:
-   [references/commands.md](references/commands.md).
-4. **No terminal means no prompts.** In CI or an agent shell, prompts cannot be answered.
-   Pass `--yes` (or `--force` where the command says so) only after you have previewed the
-   change, and pass explicit flags instead of relying on interactive selection.
-5. **`.env` is never committed.** `.env` stays git-ignored; `.env.example` (names, placeholder
-   values) is committed. Check with `evnx doctor` (`evnx doctor --fix` repairs `.gitignore`
-   and file modes).
-6. **Catch secrets before they leave the machine.** Use `evnx scan --staged` before a commit,
-   and `evnx scan hook install` to make it automatic. In CI gate on `evnx scan --severity high`.
-7. **Do not suppress to get green.** `--exit-zero`, `--update-baseline` and `# evnx:allow`
-   markers hide findings. Use them only when the user chose to accept a finding, and say what
-   you accepted. If a secret was really exposed, rotate it at the provider; deleting the file
-   or the line is not enough.
-8. **Run programs with `evnx run`** instead of exporting a `.env` into the shell:
-   `evnx run -- <command>` hands the variables to the child process only, and masks secrets in
-   output when it is not a terminal.
+1. **Never print secret values.** Do not `cat` a `.env` or paste values into chat, commits or
+   logs. `evnx parse` lists names and flags; `evnx scan` shows masked previews; `evnx get`
+   refuses a secret-looking name without `--reveal`. Use `--values`, `--show-values` or
+   `--reveal` only when the user asks, and never echo what comes back. Write only obviously
+   fake values in examples.
+2. **Values come from the user, not from you.** To fill in a `.env`, ask the user to run
+   `evnx set --fill` in their own terminal (secret names are typed with no echo). Never ask them
+   to paste a secret into the chat. A value on the command line stays in shell history.
+3. **Look before you write.** Run `--dry-run` (`-n`) first for anything that edits files, and
+   `--json` when you will read the result. Every edit keeps a `.bak`; `evnx undo FILE` puts it
+   back.
+4. **No terminal means no prompts.** In an agent shell or CI a question cannot be answered, and
+   evnx exits 4 instead of guessing. Pass `--yes` only after you have previewed the change and
+   the user agrees; pass explicit flags instead of relying on a picker.
+5. **Read the exit code; "could not run" is not "clean".** See "Reading results" below.
+6. **`.env` is never committed.** `.env` stays git-ignored; `.env.example` (names, placeholder
+   values) and `.evnx.toml` are committed. `evnx doctor` checks it, `evnx doctor --fix` repairs
+   `.gitignore` and file modes.
+7. **Catch secrets before they leave the machine.** `evnx scan --staged` before a commit, the
+   pre-commit and pre-push hooks to make it automatic, `evnx scan --history` for what commits
+   already hold.
+8. **Do not suppress to get green.** `--exit-zero`, `--update-baseline`, `evnx:allow` markers,
+   `EVNX_SCAN_BYPASS`, `--no-verify` and `hooks.evnx-scan false` hide findings or skip checks.
+   Use them only when the user chose to, and say what was accepted. A real exposed key is
+   rotated at the provider; deleting the line is not enough.
+9. **Run programs with `evnx run -- <command>`** instead of exporting a `.env` into the shell:
+   the variables reach the child only, and secrets are masked in its output when it is not a
+   terminal.
+
+## Workflow by project state
+
+| The project has | Do |
+|---|---|
+| No env files | `evnx init --list-components`, then `evnx init --yes --with ...` (preview with `--dry-run --json`); the user fills values with `evnx set --fill` |
+| A template, no `.env` (fresh clone) | `evnx init --yes` writes `.env` from it; the user runs `evnx set --fill` |
+| A `.env` | `evnx validate` (or `evnx doctor --all` for one report); placeholders: `evnx set --fill` |
+| Variables to add or change | `evnx add service stripe` (also `framework`, `blueprint`, `custom`), `evnx add import FILE`, `evnx set NAME=value`, `evnx remove NAME` |
+| Changes to commit | `evnx scan --staged`; once per clone `evnx scan hook install` |
+| Commits to push | `evnx scan --history origin/main..HEAD`; once per clone `evnx scan hook install --pre-push` |
+| A CI pipeline | [references/cicd-integration.md](references/cicd-integration.md) |
+| A leaked or committed secret | Follow the next steps `evnx scan` prints (they depend on whether the key is staged, in local commits, or pushed); rotate a real key first. [references/scan.md](references/scan.md) |
+| A team sharing values | `evnx auth`, `evnx vault`, `evnx cloud`; someone leaves: `evnx vault revoke --all-vaults --user EMAIL` and the rotate checklist. [references/cloud.md](references/cloud.md) |
+| A deploy target | `evnx convert` (a file), `evnx migrate` (a secret manager), `evnx platform` (Vercel). [references/convert-formats.md](references/convert-formats.md) |
+
+Settings look wrong? `evnx config show` prints every effective setting and where it came from.
 
 ## Pick the command
 
 | Job | Command |
 |---|---|
-| Set up `.env`, `.env.example`, `.gitignore`, contract | `evnx init` |
-| Add / remove variables (service, framework, blueprint, custom) | `evnx add`, `evnx remove` |
-| Is `.env` complete and sane vs the template? | `evnx validate` |
-| Hunt for committed or about-to-be-committed secrets | `evnx scan` (`--staged`, `scan hook`, `scan rules`) |
-| Compare two env files or env vs template | `evnx diff` |
-| Keep `.env` and `.env.example` aligned | `evnx sync` (`--check` is the CI gate) |
-| Declare required/format/secret per variable | `evnx spec init`, `evnx spec check` |
-| Output as JSON, Kubernetes, Terraform, ... | `evnx convert` |
-| Move into a secret manager | `evnx migrate` (prints commands; `--print-only` to save them) |
+| Set up `.env`, `.env.example`, `.gitignore`, the contract | `evnx init` |
+| Fill placeholders, change or read one value | `evnx set --fill`, `evnx set`, `evnx get` |
+| Add or remove variables; import from another file | `evnx add`, `evnx add import`, `evnx remove` |
+| Is `.env` complete and sane? | `evnx validate`, `evnx doctor` |
+| Secrets in files, the index, or history | `evnx scan` (`--staged`, `--history`), `evnx scan hook` |
+| Compare or align env files and the template | `evnx diff`, `evnx sync`, `evnx align`, `evnx spec check` |
+| Declare required, format, secret per variable | `evnx spec init` |
+| Another format; a secret manager; Vercel | `evnx convert`, `evnx migrate`, `evnx platform` |
 | Render a config file from a template | `evnx template` |
+| Run a program with the variables | `evnx run`, `evnx cloud run` |
 | Encrypted local backup | `evnx backup`, `evnx restore` |
+| Undo evnx's last change to a file | `evnx history`, `evnx undo` |
 | Encrypted team sync | `evnx auth`, `evnx vault`, `evnx cloud` |
-| Project health | `evnx doctor` |
-| See what evnx parses, names only | `evnx parse` |
+| Effective settings | `evnx config show` |
+| What evnx parses, names only | `evnx parse` |
+| This build's commands and features; how to upgrade | `evnx commands --json`, `evnx update` |
 
-## Typical flows
+Flags and exit codes of every command: [references/commands.md](references/commands.md).
 
-Check a project (read-only):
+## Reading results
 
-```bash
-evnx doctor
-evnx validate --strict
-evnx scan --severity high
-evnx diff --fail-on missing
-```
+**Exit codes are the API.** They mean the same in every command:
 
-Add variables safely:
+| Code | Meaning | Treat as |
+|---|---|---|
+| 0 | Ran, nothing to report | pass |
+| 1 | Ran and found something (findings, missing names, a difference, not in sync; `get`: name not in the file) | a result to report |
+| 2 | Could not run: bad flag, missing file, invalid config, refused before any change | **not a pass**: investigate |
+| 4 | Declined: answered no, or a confirmation was needed with no terminal and no `--yes` (also `get` without `--reveal`, `set --fill` with no terminal) | ask the user, or preview and pass `--yes` |
+| 5 | `restore` wrote the result aside (`<output>.restored`) | read the message |
+| 10-15 | Account and cloud: 10 not signed in, 11 forbidden (or this evnx is too old for the server), 12 plan limit, 13 unreachable, 14 conflict, 15 server error | retry only 13 and 15 |
+| 141 | Output closed early (broken pipe) | ignore when you cut the output |
 
-```bash
-evnx add --list                          # ids that exist in this version
-evnx add service stripe --dry-run --json # preview the names that would be added
-evnx add service stripe --yes            # then write (also updates .env.example)
-```
+`run` and `cloud run` return the child's own code once it started (128+n if signal n killed
+it). Branch on the code, not on the wording: human-readable text may change between releases.
 
-Before committing:
+**JSON has a `run` header.** Every `--json` (`--format json`) document starts with
+`"run": {"tool": "evnx", "version", "schema_version", "ruleset", "features"}`. Check
+`run.version` and the command's own `schema_version` before reading fields (`scan` is
+`schema_version` 3). Two outputs have no header: `scan rules list --json` (an array) and
+`scan --format sarif`. Status lines such as `config .evnx.toml` go to stderr, so stdout holds
+only the document (or the value, for `evnx get`).
 
-```bash
-evnx scan --staged
-evnx scan hook install                   # automatic from now on
-```
+**Scan findings.** `severity` is how bad a finding is if real, `confidence` how sure evnx is;
+both are floors (`--severity high` is the usual gate). A context hint may show the confidence one
+level up or down; the gate uses the level before it. A finding has `file`, `line` and, in YAML,
+JSON, TOML or notebooks, `key_path`; `encoded` means it was found inside a decoded value. Findings
+in git-ignored, untracked files (a normal `.env`) are summarised and do not fail the run.
+Lockfiles get key-format rules only. Details and accepting findings: [references/scan.md](references/scan.md).
 
-Convert or migrate: run `evnx convert --help` for the current target list, preview on stdout,
-and only write to a file (`-o`) the user wants; the output holds real values. See
-[references/convert-formats.md](references/convert-formats.md).
-
-CI: [references/cicd-integration.md](references/cicd-integration.md).
-
-## Reading scan results
-
-- `severity` (critical, high, medium, low) is how bad a finding is if real.
-  `confidence` (high, medium, low) is how sure evnx is that it is real. `--severity` and
-  `--confidence` filter each; both must pass.
-- A finding in a git-ignored, untracked file (a normal local `.env`) is summarised in one
-  line and does not fail the run; `--include-ignored` lists them.
-- To accept existing findings deliberately: `evnx scan --update-baseline` (fingerprints only,
-  safe to commit) or a same-line `# evnx:allow <rule-id> - reason` marker.
-
-## Version notes
-
-Rows append as releases ship. Check the installed version against the "since" column before
-relying on a behaviour. Anything not listed here: use `--help`.
-
-| Since | Behaviour an agent should know |
-|---|---|
-| v0.13.0 | `${VAR}` expands top to bottom, as Docker Compose does: it reads the value assigned above it, and a forward reference is an error naming the line to move. Older versions used each variable's last value. |
-| v0.13.0 | Keys may contain `.`, `-`, `[`, `]`, a leading digit or non-ASCII letters; outputs that cannot hold such a name (e.g. shell, GitHub Actions) refuse it by name. |
-| v0.13.0 | `scan --format json` is `schema_version: 2`: `severity` (how bad) is separate from `confidence` (how sure). `--severity` filters risk; before, it filtered confidence, which is now `--confidence`. SARIF `ruleId` is a stable rule id. |
-| v0.13.0 | `scan` gains rule files and packs (`scan rules`), baseline (`--baseline`, `--update-baseline`), `# evnx:allow` markers, `--staged`, and `scan hook install\|uninstall\|status`. 63 built-in rules (13 in 0.12). A `--severity high` gate may fail on more than before. |
-| v0.13.0 | `evnx remove` (alias `rm`) deletes variables from the env file, and from the template and contract with `--template`, `--contract` or `--all`. |
-| v0.13.0 | Declining a confirmation in `add` and `remove` exits 4 (`add` exited 0 before). Some `--help` text may still say otherwise; the exit code is what to trust. |
-| v0.13.0 | `auth`, `vault`, `org` and `cloud` exit 10-15 for server failures: 10 not signed in, 11 forbidden, 12 plan limit, 13 unreachable, 14 conflict or locked, 15 server error or rate limited. Earlier: 1 or 2. |
-| v0.13.0 | `cloud run` and `cloud pull` take repeatable `--vault` (merged left to right; a duplicate key is refused unless `--allow-override`). |
-| v0.13.0 | GCP secret names are lowercased with `-` in `convert --to gcp-secrets`, `migrate --to gcp-secret-manager` and `cloud export --to gcp-secrets` (`DB_URL` becomes `db-url`). `convert --to vercel` marks secret-looking variables `sensitive`. `backup`/`restore --output -` is refused. |
-| v0.12.0 | `evnx parse` (names and flags, never values). `validate` reads stdin or JSON (`--env -`, `--input-format json`). `update --list`. Declining the shared overwrite prompt (e.g. `restore`, `cloud pull`) exits 4. |
-| v0.11.0 | `evnx run`. `template` with an unresolved placeholder exits 2. `scan -` reads stdin. `convert --only secrets\|public`. `spec check`. `--env-name` on `init` and `add`. `restore` defaults to the recorded file name. |
-| v0.10.7 | `update --check` exits 0/1/2 and has `--json`. |
-| v0.10.0 | `surface` was renamed `evnx commands` (the old name still works as an alias). |
+**Next steps.** Most commands end with numbered next steps that name the exact command to run
+(for example `evnx set --fill` after `init` and `validate`). Prefer them over a generic fix, and
+tell the user what they say.
 
 ## References
 
-Each file starts with the evnx version it was generated from; confirm with `--help`.
+Each file starts with the evnx version it was checked against.
 
-- [references/commands.md](references/commands.md) - per-command purpose, key flags, exit codes
+- [references/commands.md](references/commands.md) - every command: usage, flags, exit codes (generated from `evnx commands --json`)
+- [references/local-files.md](references/local-files.md) - init, set/get, add/import, remove, validate, doctor, sync, undo
+- [references/scan.md](references/scan.md) - scan modes, reading findings, next steps, baseline and allow markers, policy, hooks, JSON
 - [references/convert-formats.md](references/convert-formats.md) - `convert` targets and per-target rules
-- [references/cicd-integration.md](references/cicd-integration.md) - GitHub Action, scan gate, SARIF, pre-commit
+- [references/cicd-integration.md](references/cicd-integration.md) - pinned install, gates, GitHub Action, SARIF, pre-commit and prek
+- [references/cloud.md](references/cloud.md) - accounts, CI tokens, vaults, revoke and rotate, cloud exit codes
+- [references/version-notes.md](references/version-notes.md) - what changed in which release
 - Docs: https://docs.evnx.dev - Changelog: https://github.com/urwithajit9/evnx/blob/main/CHANGELOG.md
-- For `.env` format and security practice that does not depend on evnx, see the
-  `dotenv-best-practices` skill.
+- For `.env` practice that does not depend on evnx, see the `dotenv-best-practices` skill.

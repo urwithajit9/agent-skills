@@ -1,0 +1,44 @@
+name: check
+
+# Installs the evnx version the evnx-cli skill is pinned to (metadata.evnx_version
+# in skills/evnx-cli/SKILL.md) and checks the skills against it:
+#   gen-commands --check   references/commands.md is what that binary generates,
+#                          the binary is the pinned version, every stamp names it
+#   check-invocations      every `evnx ...` in the skills resolves in that binary
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: Read the evnx pin
+        id: pin
+        run: echo "version=$(node scripts/gen-commands.mjs --print-pin)" >> "$GITHUB_OUTPUT"
+
+      - name: Install the pinned evnx
+        env:
+          EVNX_VERSION: ${{ steps.pin.outputs.version }}
+          EVNX_INSTALL_DIR: ${{ runner.temp }}/evnx-bin
+          GH_TOKEN: ${{ github.token }} # lets the installer check build provenance with gh
+        run: |
+          curl -fsSL https://evnx.dev/install.sh | bash
+          echo "EVNX_BIN=$EVNX_INSTALL_DIR/evnx" >> "$GITHUB_ENV"
+          "$EVNX_INSTALL_DIR/evnx" --version
+
+      - name: commands.md is generated from the pinned evnx
+        run: node scripts/gen-commands.mjs --check
+
+      - name: Every evnx invocation in the skills resolves
+        run: node scripts/check-invocations.mjs
